@@ -1,0 +1,11 @@
+#*
+*~
+*.egg-info
+*.nogit
+*.nogit.*
+__pycache__
+build
+dist
+nogit
+nogit.*
+t.*
