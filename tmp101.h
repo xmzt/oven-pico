@@ -1,15 +1,52 @@
 #ifndef TMP101_H
 #define TMP101_H
 
-#include <stdio.h>
+#include "base.h"
+#include "log.h"
+
 #include "pico/stdlib.h"
 #include "pico/binary_info.h"
 #include "hardware/i2c.h"
+#include "hardware/structs/dma.h"
+#include <stdio.h>
+
+//-----------------------------------------------------------------------------------------------------------------------
+// hardware from base.h
+
+#define TMP101_PIN_VCC PIN_TMP101_VCC
+#define TMP101_PIN_SDA PIN_TMP101_SDA
+#define TMP101_PIN_SCL PIN_TMP101_SCL
+
+#define TMP101_DMA_A DMA_TMP101_A
+#define TMP101_DMA_B DMA_TMP101_B
+#define TMP101_DMA_IRQ DMA_IRQ_TMP101
+#define TMP101_DMA_INTE DMA_INTE_TMP101
+#define TMP101_DMA_INTS DMA_INTS_TMP101
+
+#define TMP101_I2C I2C_TMP101
+#define TMP101_I2C_IRQ I2C_IRQ_TMP101
+#define TMP101_I2C_DREQ_TX I2C_DREQ_TMP101_TX
+#define TMP101_I2C_DREQ_RX I2C_DREQ_TMP101_RX
+
+#define TMP101_ALARM_ID ALARM_ID_TMP101
+#define TMP101_ALARM_IRQ_ID ALARM_IRQ_ID_TMP101
+
+#define TMP101_TAR 0b1001001
+#define TMP101_BAUD 100000
+#define TMP101_CONFIG TMP101_CONFIG_RESOLUTION_12
+#define TMP101_TLIM_LO 0x8000
+#define TMP101_TLIM_HI 0x7FFF
+#define TMP101_TEMP_REQ_ALARM_DUR 1000000
+#define TMP101_VCC_OFF_ALARM_DUR 100000 // 100ms
+#define TMP101_VCC_ON_ALARM_DUR 100000 // 100ms
+
+//-----------------------------------------------------------------------------------------------------------------------
+// constants
 
 #define TMP101_PTR_TEMP   0
 #define TMP101_PTR_CONFIG 1
-#define TMP101_PTR_TLO    2
-#define TMP101_PTR_THI    3
+#define TMP101_PTR_TLIM_LO   2
+#define TMP101_PTR_TLIM_HI   3
 
 #define TMP101_CONFIG_SHUTDOWN_DIS          (0<<0)
 #define TMP101_CONFIG_SHUTDOWN_EN           (1<<0)
@@ -29,6 +66,16 @@
 #define TMP101_CONFIG_ONESHOT_EN            (1<<7)
 #define TMP101_CONFIG_ALERT                 (1<<7)
 
+#define TMP101_STATE_0            0
+#define TMP101_STATE_CONFIG       1
+#define TMP101_STATE_TLIM_LO      2
+#define TMP101_STATE_TLIM_HI      3
+
+//-----------------------------------------------------------------------------------------------------------------------
+// globals
+
+extern uint32_t g_tmp101_temp;
+
 //-----------------------------------------------------------------------------------------------------------------------
 // temperature scales
 
@@ -41,67 +88,10 @@ inline static float tmp101_tf_of_tc(float tc) {
 }
 
 //-----------------------------------------------------------------------------------------------------------------------
-// initi
+// init
 
-void tmp101_init_i2c(i2c_inst_t *i2c, uint pinVcc, uint pinSda, uint pinScl);
+void tmp101_init_hw();
 
-// tlo and thi are actually signed int16_t, but this function treats them as uint16_t
-void tmp101_init_chip(i2c_inst_t *i2c, uint8_t addr, uint config, uint16_t tlo, uint16_t thi);
-
-//-----------------------------------------------------------------------------------------------------------------------
-// basic i/o
-
-#if TMP101_DEBUG
-inline static int tmp101_write_1(i2c_inst_t *i2c, uint8_t addr, uint8_t a) {
-	int ret = i2c_write_blocking(i2c, addr, &a, 1, /*nostop*/ true);
-	printf("tmp101_write_1 %02x [ret=%d]\n", a, ret);
-	return ret;
-}
-
-inline static int tmp101_write_2(i2c_inst_t *i2c, uint8_t addr, uint8_t a, uint8_t b) {
-	int ret = i2c_write_blocking(i2c, addr, (uint8_t[]) { a, b }, 2, /*nostop*/ true);
-	printf("tmp101_write_2 %02x,%02x [ret=%d]\n", a, b, ret);
-	return ret;
-}
-
-inline static int tmp101_write_3(i2c_inst_t *i2c, uint8_t addr, uint8_t a, uint8_t b, uint8_t c) {
-	int ret = i2c_write_blocking(i2c, addr, (uint8_t[]) { a, b, c }, 3, /*nostop*/ true);
-	printf("tmp101_write_3 %02x,%02x,%02x [ret=%d]\n", a, b, c, ret);
-	return ret;
-}
-
-inline static int tmp101_read_1(i2c_inst_t *i2c, uint8_t addr, uint8_t *buf) {
-	int ret = i2c_read_blocking(i2c, addr, buf, 1, /*nostop*/ true);
-	printf("tmp101_read_1 %02x [ret=%d]\n", buf[0], ret);
-	return ret;
-}
-
-inline static int tmp101_read_2(i2c_inst_t *i2c, uint8_t addr, uint8_t *buf) {
-	int ret = i2c_read_blocking(i2c, addr, buf, 2, /*nostop*/ true);
-	printf("tmp101_read_2 %02x,%02x [ret=%d]\n", buf[0], buf[1], ret);
-	return ret;
-}
-#else
-inline static int tmp101_write_1(i2c_inst_t *i2c, uint8_t addr, uint8_t a) {
-	return i2c_write_blocking(i2c, addr, &a, 1, /*nostop*/ true);
-}
-
-inline static int tmp101_write_2(i2c_inst_t *i2c, uint8_t addr, uint8_t a, uint8_t b) {
-	return i2c_write_blocking(i2c, addr, (uint8_t[]) { a, b }, 2, /*nostop*/ true);
-}
-
-inline static int tmp101_write_3(i2c_inst_t *i2c, uint8_t addr, uint8_t a, uint8_t b, uint8_t c) {
-	return i2c_write_blocking(i2c, addr, (uint8_t[]) { a, b, c }, 3, /*nostop*/ true);
-}
-
-inline static int tmp101_read_1(i2c_inst_t *i2c, uint8_t addr, uint8_t *buf) {
-	return i2c_read_blocking(i2c, addr, buf, 1, /*nostop*/ true);
-}
-
-inline static int tmp101_read_2(i2c_inst_t *i2c, uint8_t addr, uint8_t *buf) {
-	return i2c_read_blocking(i2c, addr, buf, 2, /*nostop*/ true);
-}
-#endif // #if TMP101_DEBUG
+void tmp101_start();
 
 #endif
-

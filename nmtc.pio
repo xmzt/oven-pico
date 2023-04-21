@@ -1,73 +1,56 @@
-;;-----------------------------------------------------------------------------------------------------------------------
-.program nmtc_pio
+;;;----------------------------------------------------------------------------------------------------------------------
+;;; timing 
+;;;
+;;; delays based on pio clock of 31250000 (125000000 / 4)
 
-;; TIMING
-;;
-;; overall instruction times for fosc=270KHz:
-;;     clear display, return home: 1.52ms
-;;     else: 38us
-;;
-;; NOTE1: according to datasheet, db pins only need to be valid 195ns before enable off. this
-;; justifies setting db pindirs a few cycles after setting pins
+.define TSetup    4		; 128ns (min 60ns=tsp1, RS RW setup before E on)
+.define TEnOn     32           	; 512ns (min 230ns=tpw, E on)
+.define TEnOnRead 24        	; 256ns (min 120ns=td, read DB after E on)
+.define TEnOff    32        	; 512ns (min 270ns=tc-tpw, min tc=500ns, E off)
 
-.define public ClkHz         31250000  ; 500e-9 / (1<<(5=DelayBits)) * (safety factor >= 2.0)
-.define public TSetup        4         ; 62.5ns (min 60ns, RS RW setup before E on)
-.define public TEnableOn     32        ; 500ns (min 450ns, E on)
-.define public TEnableOnRead 24        ; 375ns (min 360ns, read DB after E on)
-.define public TEnableOff    32        ; 500ns (min 450ns, E off) 
+;;; ---------------------------------------------------------------------------------------------------------------------
+;;; nmtc_pio_start initialize the chip
+;;;
+;;; output only. caller must set preset pindirs.
 
-.define public DelayInit0     (ClkHz * 5/100)    ; 5e-2 sec
-.define public DelayInit1     (ClkHz * 5/1000)   ; 5e-3 sec
-.define public DelayInit2     (ClkHz * 1/10000)  ; 1e-4 sec
-.define public DelayClearHome (ClkHz * 2/1000)   ; 2e-3 sec
-.define public DelayNormal    (ClkHz * 4/100000) ; 4e-5 sec
+.program nmtc_pio_start
 
-.define public PindirsRead   0x300     ; 0x00<<0 | 1<<8 | 1<<9
-.define public PindirsWrite  0x3FF     ; 0xFF<<0 | 1<<8 | 1<<9
-.define public PinsReadBusy  0x200     ; 0x00<<0 | 0<<8 | 1<<9
-
-    pull block
-    out x, 32
+.wrap_target	
 start_loop:
-    pull block
-    out pins, 10	[TSetup - 3]
-    out y, 21
-start_predelay:
-    jmp y-- start_predelay
-    set pins, 1		[TEnableOn - 1]
-    set pins, 0		[TEnableOff - 1]
-    out y, 1
-    jmp !y start_loop
-    mov	isr, y
-    push block
-
-.wrap_target
-    mov osr, x
-;;read_start
-    out pindirs, 10
-    out pins, 10        [TSetup - 1]
-read_busy_ret:
-    set pins, 1		[TEnableOn - 3]
-    in pins, 10
-    jmp pin read_busy
-;;read_nobusy
-    set pins, 0		[TEnableOff - 1]
-;;write_start
-    out pindirs, 10	
-    pull block
-    out pins, 10        [TSetup - 1]
-    set pins, 1		[TEnableOn - 1]
-    set pins, 0		[TEnableOff - 2]
+	pull block				; load delay from TX_FIFO 
+	out y, 32				; delay 
+start_predelay:				 	; "	
+	jmp y-- start_predelay		 	; "
+	pull block				; load pindirs and pins from TX_FIFO
+	out pindirs, 10				; set pindirs
+	out pins, 10		[TSetup - 1]	; set pins
+	set pins, 1		[TEnOn - 1]	; set EN pin
+	set pins, 0		[TEnOff - 8] 	; clear EN pin
+	out y, 1  			      	; if OSR[31] clear, continue in start mode
+	jmp !y start_loop			; "
+	irq set 0				; else set IRQ 0
 .wrap
 
-read_busy:
-    set pins, 0		[TEnableOff - 2]
-    jmp read_busy_ret
+;;; ---------------------------------------------------------------------------------------------------------------------
+;;; nmtc_pio_run normal running after initialization
+;;;
+;;; entry point is .wrap_target
 
-;;-----------------------------------------------------------------------------------------------------------------------
-% c-sdk {
-#define nmtc_pio_Fifo0_From(a, b, c) ((a)<<0 | (b)<<10 | (c)<<20)
-#define nmtc_pio_Fifo0 \
-    nmtc_pio_Fifo0_From(nmtc_pio_PindirsRead, nmtc_pio_PinsReadBusy, nmtc_pio_PindirsWrite)
+.program nmtc_pio_run
 
-%}
+run_busy_loop:
+	;; jump all the way here, even if redoing instructions, to save an instruction
+	set pins, 0		[TEnOff - 3]    ; EN=0 
+.wrap_target
+	mov osr, x				; load OSR with busy read command from X
+	out pindirs, 10				; OSR[0:9] are pindirs
+	out pins, 10		[TSetup - 1]	; OSR[10:19] are pin values
+	set pins, 1		[TEnOn - 2] 	; EN=1
+	jmp pin run_busy_loop			; loop if DB7 (busy flag) is set
+	set pins, 0		[TEnOff - 3]	; EN=0
+	pull block				; load OSR from TX_FIFO
+	out pindirs, 10				; output pindirs OSR[0:9]
+	out pins, 10        	[TSetup - 1]	; output pins OSR[10:19]
+	set pins, 1		[TEnOn - 1]	; EN=1
+	set pins, 0		[TEnOff - 3]	; EN=0
+.wrap	
