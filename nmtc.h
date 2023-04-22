@@ -5,19 +5,13 @@
 
 #include "base.h"
 
-#include "pico/stdlib.h"
-#include "hardware/pio.h"
-#include "hardware/clocks.h"
-#include <stdio.h>
-
-#include "nmtc.pio.h"
-
 //-----------------------------------------------------------------------------------------------------------------------
 // hardware from base.h
 
 #define NMTC_PIN_DB8_RS_RW_EN PIN_NMTC_DB8_RS_RW_EN
 
 #define NMTC_DMA_A DMA_NMTC_A
+#define NMTC_DMA_B DMA_NMTC_B
 #define NMTC_DMA_IRQ DMA_IRQ_NMTC
 #define NMTC_DMA_INTE DMA_INTE_NMTC
 #define NMTC_DMA_INTS DMA_INTS_NMTC
@@ -103,13 +97,8 @@
 #define NMTC_PIO_DELAY_0          (NMTC_PIO_CLKHZ * 5/100)    // 5e-2 sec
 #define NMTC_PIO_DELAY_1          (NMTC_PIO_CLKHZ * 5/1000)   // 5e-3 sec
 #define NMTC_PIO_DELAY_2          (NMTC_PIO_CLKHZ * 1/10000)  // 1e-4 sec
-#define NMTC_PIO_DELAY_CLEAR_HOME (NMTC_PIO_CLKHZ * 2/1000)   // 2e-3 sec (min 1.52ms @ fosc=270kHz)
-#define NMTC_PIO_DELAY_NORMAL     (NMTC_PIO_CLKHZ * 4/100000) // 4e-5 sec (min 38us @ fosc=270kHz)
-#define NMTC_PIO_DELAY_LONG       (125000000 / NMTC_PIO_CLKDIV_INT / 4)
-
-#define DISP_DELAY_INIT0 50e-3
-#define DISP_DELAY_INIT1 5e-3
-#define DISP_DELAY_INIT2 100e-6
+//#define NMTC_PIO_DELAY_CLEAR_HOME (NMTC_PIO_CLKHZ * 2/1000)   // 2e-3 sec (min 1.52ms @ fosc=270kHz)
+//#define NMTC_PIO_DELAY_NORMAL     (NMTC_PIO_CLKHZ * 4/100000) // 4e-5 sec (min 38us @ fosc=270kHz)
 
 #define NMTC_PIO_PINDIRS_R        0x300
 #define NMTC_PIO_PINDIRS_W        0x3FF
@@ -120,9 +109,25 @@
 #define NMTC_PIO_RUN_X (NMTC_PIO_PINDIRS_R | NMTC_BUSY_READ_INST << 10)
 
 //-----------------------------------------------------------------------------------------------------------------------
+// nmtc_q
+
+typedef struct nmtc_q_item_t nmtc_q_item_t;
+
+struct nmtc_q_item_t {
+	nmtc_q_item_t *q_next;
+	uint32_t read_addr;
+	uint32_t transfer_count;
+	uint status;
+};
+
+void nmtc_q_item_post_nirq(nmtc_q_item_t *self, uint32_t read_addr, uint32_t transfer_count);
+
+uint32_t * nmtc_cmdV_from_u8(uint32_t *dst, const uint8_t *src);
+
+//-----------------------------------------------------------------------------------------------------------------------
 // nmtc_init
 
-void nmtc_init_start();
+void nmtc_init();
 void nmtc_start();
 void nmtc_run_from_start();
 

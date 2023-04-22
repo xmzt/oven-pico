@@ -2,13 +2,6 @@
 #define TMP101_H
 
 #include "base.h"
-#include "log.h"
-
-#include "pico/stdlib.h"
-#include "pico/binary_info.h"
-#include "hardware/i2c.h"
-#include "hardware/structs/dma.h"
-#include <stdio.h>
 
 //-----------------------------------------------------------------------------------------------------------------------
 // hardware from base.h
@@ -79,8 +72,8 @@ extern uint32_t g_tmp101_temp;
 //-----------------------------------------------------------------------------------------------------------------------
 // temperature scales
 
-inline static float tmp101_tc_of_buf(uint8_t buf[2]) {
-	return (int16_t)(buf[0] << 8 | buf[1]) / 256.0;
+inline static float tmp101_tc_of_raw(uint raw) {
+	return raw / 256.0;
 }
 
 inline static float tmp101_tf_of_tc(float tc) {
@@ -90,7 +83,7 @@ inline static float tmp101_tf_of_tc(float tc) {
 //-----------------------------------------------------------------------------------------------------------------------
 // init
 
-void tmp101_init_hw();
+void tmp101_init();
 
 void tmp101_start();
 

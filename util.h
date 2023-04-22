@@ -65,6 +65,8 @@ typedef struct {
 	 | (rxffhc) << I2C_IC_CON_RX_FIFO_FULL_HLD_CTRL_LSB					\
 	 )
 
+void util_i2c_set_baudrate_lt_1e6(i2c_hw_t *hw, uint baudrate);
+
 //-----------------------------------------------------------------------------------------------------------------------
 // util_io
 
