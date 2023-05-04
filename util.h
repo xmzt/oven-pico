@@ -1,18 +1,15 @@
 #ifndef UTIL_H
 #define UTIL_H
 
-#include "pico/stdlib.h"
-#include "hardware/clocks.h"
-#include "hardware/irq.h"
-#include "hardware/pio.h"
-#include "hardware/structs/i2c.h"
-#include "hardware/structs/rosc.h"
-#include "hardware/structs/scb.h"
-#include "hardware/structs/timer.h"
+#include "base.h"
 
-#define ATOMIC_ALIAS_XOR 0x1000
-#define ATOMIC_ALIAS_SET 0x2000
-#define ATOMIC_ALIAS_CLR 0x3000
+//-----------------------------------------------------------------------------------------------------------------------
+// alias
+
+#define UTIL_ALIAS_RW(x) (x)
+#define UTIL_ALIAS_XOR(x) ( * (typeof(&(x))) ((1<<12) | (uintptr_t)&(x)) )
+#define UTIL_ALIAS_SET(x) ( * (typeof(&(x))) ((2<<12) | (uintptr_t)&(x)) )
+#define UTIL_ALIAS_CLR(x) ( * (typeof(&(x))) ((3<<12) | (uintptr_t)&(x)) )
 
 //-----------------------------------------------------------------------------------------------------------------------
 // util_dma
@@ -24,14 +21,14 @@ typedef struct {
 	uint32_t ctrl_trig;
 } util_dma_block_0_t;
 
-#define UTIL_DMA_CTRL_TRIG_EN_DSZ_INCR_INCW_RSZ_RSEL_TO_TREQ_IQ(en, dsz, incr, incw, rsz, rsel, to, treq, iq) \
+#define UTIL_DMA_CTRL_TRIG_EN_DSZ_INCR_INCW_RSZ_RSEL_TO_TREQ_IQ(en,dsz,incr,incw,rsz,rsel,to,treq,iq) \
 	((en) << DMA_CH0_CTRL_TRIG_EN_LSB									\
-	 /*| 0<<DMA_CH0_CTRL_TRIG_HIGH_PRIORITY_LSB*/						\
+	 /*| 0 << DMA_CH0_CTRL_TRIG_HIGH_PRIORITY_LSB*/						\
 	 | (dsz) << DMA_CH0_CTRL_TRIG_DATA_SIZE_LSB							\
 	 | (incr) << DMA_CH0_CTRL_TRIG_INCR_READ_LSB						\
 	 | (incw) << DMA_CH0_CTRL_TRIG_INCR_WRITE_LSB						\
 	 | (rsz) << DMA_CH0_CTRL_TRIG_RING_SIZE_LSB							\
-	 | (rsel) << DMA_CH0_CTRL_TRIG_RING_SEL_LSB							\
+	 | /*r0w1*/ (rsel) << DMA_CH0_CTRL_TRIG_RING_SEL_LSB					\
 	 | (to) << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB							\
 	 | (treq) << DMA_CH0_CTRL_TRIG_TREQ_SEL_LSB							\
 	 | (iq) << DMA_CH0_CTRL_TRIG_IRQ_QUIET_LSB							\
@@ -42,13 +39,13 @@ typedef struct {
 //-----------------------------------------------------------------------------------------------------------------------
 // util_i2c
 
-#define UTIL_I2C_DATA_WRITE_R_S_D(restart, stop, data) \
+#define UTIL_I2C_DATA_WRITE_RESTART_STOP_DATA(restart,stop,data) \
 	((restart) << I2C_IC_DATA_CMD_RESTART_LSB		   \
 	 | (stop) << I2C_IC_DATA_CMD_STOP_LSB			   \
 	 | /*w0r1*/ 0 << I2C_IC_DATA_CMD_CMD_LSB		   \
 	 | (data))
 
-#define UTIL_I2C_DATA_READ_R_S(restart, stop)	\
+#define UTIL_I2C_DATA_READ_RESTART_STOP(restart,stop)	\
 	((restart) << I2C_IC_DATA_CMD_RESTART_LSB	\
 	 | (stop) << I2C_IC_DATA_CMD_STOP_LSB		\
 	 | /*w0r1*/ 1 << I2C_IC_DATA_CMD_CMD_LSB)
@@ -70,42 +67,34 @@ void util_i2c_set_baudrate_lt_1e6(i2c_hw_t *hw, uint baudrate);
 //-----------------------------------------------------------------------------------------------------------------------
 // util_io
 
-#define UTIL_IO_BANK0_GPIO_CTRL_FS(fs) \
-	((fs) << IO_BANK0_GPIO0_CTRL_FUNCSEL_LSB \
-	 /*| 0 << IO_BANK0_GPIO0_CTRL_OUTOVER_LSB*/	\
-	 /*| 0 << IO_BANK0_GPIO0_CTRL_OEOVER_LSB*/	\
-	 /*| 0 << IO_BANK0_GPIO0_CTRL_INOVER_LSB*/	\
-	 /*| 0 << IO_BANK0_GPIO0_CTRL_IRQOVER_LSB*/	\
+#define UTIL_IO_BANK0_GPIO_CTRL_FUNCSEL_OUTOVER_OEOVER_INOVER_IRQOVER(funcsel,outover,oeover,inover,irqover) \
+	((funcsel) << IO_BANK0_GPIO0_CTRL_FUNCSEL_LSB						\
+	 | (outover) << IO_BANK0_GPIO0_CTRL_OUTOVER_LSB						\
+	 | (oeover) << IO_BANK0_GPIO0_CTRL_OEOVER_LSB						\
+	 | (inover) << IO_BANK0_GPIO0_CTRL_INOVER_LSB						\
+	 | (irqover) << IO_BANK0_GPIO0_CTRL_IRQOVER_LSB						\
 	 )
 
 //-----------------------------------------------------------------------------------------------------------------------
-// util_irq
+// util_irq util_isr
 
-inline static void util_irq_iser(uint32_t mask) {
-	// todo? ICPR as well as ISER?
-	*((io_rw_32 *)(PPB_BASE + M0PLUS_NVIC_ISER_OFFSET)) = mask;
-}
+typedef void util_isr_t(void);
 
-inline static void util_irq_hand(uint num, irq_handler_t hand) {
-    ((irq_handler_t *)scb_hw->vtor)[VTABLE_FIRST_IRQ + num] = hand;
-}
-
-inline static void util_irq_hand_iser(uint num, irq_handler_t hand) {
-    util_irq_hand(num, hand);
-	util_irq_iser(1<<num);
+inline static void util_irq_isr(uint irq, util_isr_t *isr) {
+    ((util_isr_t**)scb_hw->vtor)[VTABLE_FIRST_IRQ + irq] = isr;
 }
 
 //-----------------------------------------------------------------------------------------------------------------------
 // util_pads
 
-#define UTIL_PADS_BANK0_GPIO_OD_IE_DRV_PUE_PDE_SCH_SF(od, ie, drv, pue, pde, sch, sf) \
+#define UTIL_PADS_BANK0_GPIO_OD_IE_DRIVE_PUE_PDE_SCHMITT_SLEWFAST(od,ie,drive,pue,pde,schmitt,slewfast) \
 	((od) << PADS_BANK0_GPIO0_OD_LSB									\
 	 | (ie) << PADS_BANK0_GPIO0_IE_LSB									\
-	 | (drv) << PADS_BANK0_GPIO0_DRIVE_LSB								\
+	 | (drive) << PADS_BANK0_GPIO0_DRIVE_LSB							\
 	 | (pue) << PADS_BANK0_GPIO0_PUE_LSB								\
 	 | (pde) << PADS_BANK0_GPIO0_PDE_LSB								\
-	 | (sch) << PADS_BANK0_GPIO0_SCHMITT_LSB							\
-	 | (sf) << PADS_BANK0_GPIO0_SLEWFAST_LSB							\
+	 | (schmitt) << PADS_BANK0_GPIO0_SCHMITT_LSB						\
+	 | (slewfast) << PADS_BANK0_GPIO0_SLEWFAST_LSB						\
 	 )
 
 //-----------------------------------------------------------------------------------------------------------------------
@@ -117,16 +106,9 @@ inline static void util_irq_hand_iser(uint num, irq_handler_t hand) {
 	 | (cdr) << PIO_CTRL_CLKDIV_RESTART_LSB	   \
 	 )
 
-#define UTIL_PIO_CTRL_STATE_SME_SMR_CDR(state,sme,smr,cdr)	\
-	((sme) << PIO_CTRL_SM_ENABLE_LSB		   \
-	 | (smr) << PIO_CTRL_SM_RESTART_LSB		   \
-	 | (cdr) << PIO_CTRL_CLKDIV_RESTART_LSB	   \
-	 )
-
-
-#define UTIL_PIO_SM_CLKDIV_F_I(f, i)			\
-	((f) << PIO_SM0_CLKDIV_FRAC_LSB				\
-	 | (i) << PIO_SM0_CLKDIV_INT_LSB			\
+#define UTIL_PIO_SM_CLKDIV_FRAC_INT(frac,int_)	\
+	((frac) << PIO_SM0_CLKDIV_FRAC_LSB			\
+	 | (int_) << PIO_SM0_CLKDIV_INT_LSB			\
 	 )
 
 // wrap is from top to bottom. top to bottom. as in hi PC to lo PC. not how code looks on a screen. don't forget.
@@ -146,10 +128,10 @@ inline static void util_irq_hand_iser(uint num, irq_handler_t hand) {
 #define UTIL_PIO_SM_SHIFTCTRL_APUSH_APULL_ISD_OSD_PUSHT_PULLT_FJT_FJR(apush,apull,isd,osd,pusht,pullt,fjt,fjr) \
 	((apush) << PIO_SM0_SHIFTCTRL_AUTOPUSH_LSB							\
 	 | (apull) << PIO_SM0_SHIFTCTRL_AUTOPULL_LSB						\
-	 | (isd) << PIO_SM0_SHIFTCTRL_IN_SHIFTDIR_LSB						\
-	 | (osd) << PIO_SM0_SHIFTCTRL_OUT_SHIFTDIR_LSB						\
-	 | (pusht) << PIO_SM0_SHIFTCTRL_PUSH_THRESH_LSB						\
-	 | (pullt) << PIO_SM0_SHIFTCTRL_PULL_THRESH_LSB						\
+	 | /*l0r1*/ (isd) << PIO_SM0_SHIFTCTRL_IN_SHIFTDIR_LSB				\
+	 | /*l0r1*/ (osd) << PIO_SM0_SHIFTCTRL_OUT_SHIFTDIR_LSB				\
+	 | /*0->32*/ (pusht) << PIO_SM0_SHIFTCTRL_PUSH_THRESH_LSB			\
+	 | /*0->32*/ (pullt) << PIO_SM0_SHIFTCTRL_PULL_THRESH_LSB			\
 	 | (fjt) << PIO_SM0_SHIFTCTRL_FJOIN_TX_LSB							\
 	 | (fjr) << PIO_SM0_SHIFTCTRL_FJOIN_RX_LSB							\
 	 )
@@ -180,6 +162,28 @@ inline static uint util_pio_load(io_wo_32 *dst_base, uint dst_off, const uint16_
     }
 	return dst_off;
 }
+
+//-----------------------------------------------------------------------------------------------------------------------
+// util_pwm
+
+#define UTIL_PWM_CSR_EN_PHCORRECT_AINV_BINV_DIVMODE_PHRET_PHADV(en,phcorrect,ainv,binv,divmode,phret,phadv) \
+	((en) << PWM_CH0_CSR_EN_LSB											\
+	 | (phcorrect) << PWM_CH0_CSR_PH_CORRECT_LSB						\
+	 | (ainv) << PWM_CH0_CSR_A_INV_LSB									\
+	 | (binv) << PWM_CH0_CSR_B_INV_LSB									\
+	 | (divmode) << PWM_CH0_CSR_DIVMODE_LSB								\
+	 | (phret) << PWM_CH0_CSR_PH_RET_LSB								\
+	 | (phadv) << PWM_CH0_CSR_PH_ADV_LSB)
+
+#define UTIL_PWM_DIV_FRAC_INT(frac,int_)		\
+	((frac) << PWM_CH0_DIV_FRAC_LSB				\
+	 | (int_) << PWM_CH0_DIV_INT_LSB			\
+	 )
+
+#define UTIL_PWM_CC_A_B(a,b)					\
+	((a) << PWM_CH0_CC_A_LSB					\
+	 | (b) << PWM_CH0_CC_B_LSB					\
+	 )
 
 //-----------------------------------------------------------------------------------------------------------------------
 // util_rando

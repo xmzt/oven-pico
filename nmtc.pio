@@ -13,35 +13,35 @@
 ;;;
 ;;; output only. caller must set preset pindirs.
 
-.program nmtc_pio_start
+	.program nmtc_pio_start
 
-.wrap_target	
+	.wrap_target	
 start_loop:
-	pull block				; load delay from TX_FIFO 
+	;; pull block				; load delay from TX_FIFO 
 	out y, 32				; delay 
 start_predelay:				 	; "	
 	jmp y-- start_predelay		 	; "
-	pull block				; load pindirs and pins from TX_FIFO
+	;; pull block				; load pindirs and pins from TX_FIFO
 	out pindirs, 10				; set pindirs
 	out pins, 10		[TSetup - 1]	; set pins
 	set pins, 1		[TEnOn - 1]	; set EN pin
-	set pins, 0		[TEnOff - 8] 	; clear EN pin
-	out y, 1  			      	; if OSR[31] clear, continue in start mode
-	jmp !y start_loop			; "
-	irq set 0				; else set IRQ 0
-.wrap
+	set pins, 0		[TEnOff - 6] 	; clear EN pin
+	out y, 12  			      	; load result
+	jmp !y start_loop			; if 0 == result, do nothing 
+	in y, 32				; else return result
+	.wrap
 
 ;;; ---------------------------------------------------------------------------------------------------------------------
 ;;; nmtc_pio_run normal running after initialization
 ;;;
 ;;; entry point is .wrap_target
 
-.program nmtc_pio_run
+	.program nmtc_pio_run
 
 run_busy_loop:
 	;; jump all the way here, even if redoing instructions, to save an instruction
 	set pins, 0		[TEnOff - 3]    ; EN=0 
-.wrap_target
+	.wrap_target
 	mov osr, x				; load OSR with busy read command from X
 	out pindirs, 10				; OSR[0:9] are pindirs
 	out pins, 10		[TSetup - 1]	; OSR[10:19] are pin values
@@ -53,4 +53,4 @@ run_busy_loop:
 	out pins, 10        	[TSetup - 1]	; output pins OSR[10:19]
 	set pins, 1		[TEnOn - 1]	; EN=1
 	set pins, 0		[TEnOff - 3]	; EN=0
-.wrap	
+	.wrap	

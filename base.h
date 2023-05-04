@@ -1,8 +1,35 @@
 #ifndef BASE_H
 #define BASE_H
 
-#include "util.h"
+#include "pico/stdlib.h"
+
+//#include "hardware/address_mapped.h"
+#include "hardware/pio.h"
+#include "hardware/sync.h"
+
+#include "hardware/regs/intctrl.h"
+//#include "hardware/regs/m0plus.h"
+
+#include "hardware/structs/dma.h"
+#include "hardware/structs/i2c.h"
+#include "hardware/structs/nvic.h"
+#include "hardware/structs/pll.h"
+#include "hardware/structs/pwm.h"
+#include "hardware/structs/rosc.h"
+#include "hardware/structs/scb.h"
+#include "hardware/structs/systick.h"
+#include "hardware/structs/timer.h"
+#include "hardware/structs/watchdog.h"
+
 #include "nmtc.pio.h"
+#include "ac.pio.h"
+
+//=======================================================================================================================
+// types
+//=======================================================================================================================
+
+typedef void thunk_t(void);
+typedef void isr_t(void);
 
 //=======================================================================================================================
 // resource allocation and globals
@@ -10,19 +37,20 @@
 
 extern uint32_t g_pio0_ctrl; // to keep enable state for other state machines
 extern uint32_t g_rando;
-extern uint32_t g_test[];
 
 //-----------------------------------------------------------------------------------------------------------------------
 // debug
 
 #define NMTC_DEBUG 1
 #define TMP101_DEBUG 1
+#define AC_DEBUG 1
 
 //-----------------------------------------------------------------------------------------------------------------------
 // clocks
 //
 // copied from SDK clocks_init()
 
+#define KHZ 1000
 #define MHZ 1000000
 
 // pll_init(pll_sys, 1, 1500 * MHZ, 6, 2);
@@ -38,12 +66,12 @@ extern uint32_t g_test[];
 #define TIMER_HZ (1 * MHZ)
 
 //-----------------------------------------------------------------------------------------------------------------------
-// pin allocation
+// pin and PWM allocation
 
 // VBUS = USB 5V
 // VSYS = VBUS - Schottky*1
 
-#define PIN_NMTC_DB8_RS_RW_EN 0 // starting pin for 11 contiguous pins ordered DB0-DB7,RS,RW,EN
+#define NMTC_PIN_DB8_RS_RW_EN 0 // starting pin for 11 contiguous pins ordered DB0-DB7,RS,RW,EN
 // disp.1.vss - pico.GND, logic gnd
 // disp.2.vdd - pico.3V3, logic power (VDD-VSS: -0.3 - 7.0)
 // disp.3.vee - pico.GND, lcd power neg, should be neg 1.2V, recommend vdd-vee of 4.8@-20C 4.5@25C 4.2@70C
@@ -52,47 +80,57 @@ extern uint32_t g_test[];
 // disp.6.en - pico.gpio[10]
 // disp.[7:14] - pico.gpio[0-7]
 
-#define PIN_TMP101_VCC 11 // tmp101.4.v+ yel
-#define PIN_TMP101_SDA 12 // tmp101.6.sda blu
-#define PIN_TMP101_SCL 13 // tmp101.1.scl yel
+#define TMP101_PIN_VCC 11 // tmp101.4.v+ yel
+#define TMP101_PIN_SDA 12 // tmp101.6.sda blu
+#define TMP101_PIN_SCL 13 // tmp101.1.scl yel
 // tmp101.2.gnd - GND blu
+
+#define AC_PIN_PHASE_IN 16
+#define AC_PIN_PHASE_OUT 17
+#define AC_PWM_SLICE_ID_PHASE 0
+#define AC_PWM_SLICE_PHASE (&pwm_hw->slice[AC_PWM_SLICE_ID_PHASE])
+
+#define AC_PIN_OUT4 18 // starting pin for 4 contiguous
+#define AC_PWM_SLICE_ID_OUT01 0
+#define AC_PWM_SLICE_OUT01 (&pwm_hw->slice[AC_PWM_SLICE_ID_OUT01])
+#define AC_PWM_SLICE_ID_OUT23 0
+#define AC_PWM_SLICE_OUT23 (&pwm_hw->slice[AC_PWM_SLICE_ID_OUT23])
 
 //-----------------------------------------------------------------------------------------------------------------------
 // dma allocation
 
-#define DMA_TMP101_A 8
-#define DMA_TMP101_B 9
-#define DMA_NMTC_A   10
-#define DMA_NMTC_B   11
-
-#define DMA_IRQ_TMP101 DMA_IRQ_0
-#define DMA_INTE_TMP101 (dma_hw->inte0)
-#define DMA_INTS_TMP101 (dma_hw->ints0)
-
-#define DMA_IRQ_NMTC DMA_IRQ_1
-#define DMA_INTE_NMTC (dma_hw->inte1)
-#define DMA_INTS_NMTC (dma_hw->ints1)
+#define TMP101_DMA_A 0
+#define TMP101_DMA_B 1
+#define NMTC_DMA_A   2
+#define NMTC_DMA_B   3
+#define AC_DMA_A     4
+#define AC_DMA_B     5
 
 //-----------------------------------------------------------------------------------------------------------------------
 // pio allocation
 
 #define MMAXX(a,b) ((a) >= (b) ? (a) : (b))
 
-#define PIO_NMTC pio0_hw
+#define NMTC_PIO pio0_hw
+#define NMTC_PIO_SM_ID 0
+#define NMTC_PIO_SM (&NMTC_PIO->sm[NMTC_PIO_SM_ID])
+#define NMTC_PIO_DREQ_RX DREQ_PIO0_RX0
+#define NMTC_PIO_DREQ_TX DREQ_PIO0_TX0
 
-#define PIO0_SM_ID_NMTC 0
+#define AC_PHASE_PIO pio0_hw
+#define AC_PHASE_PIO_SM_ID 1
+#define AC_PHASE_PIO_SM (&AC_PIO->sm[AC_PHASE_PIO_SM_ID])
+#define AC_PHASE_PIO_DREQ_RX DREQ_PIO0_RX1
 
-#define PIO0_CODE_NMTC_A 0
-#define PIO0_CODE_NMTC_E (PIO_CODE_NMTC_A + MMAXX(nmtc_pio_start_program.length, nmtc_pio_run_program.length))
+#define AC_PHASE_PIO_IRQ PIO0_IRQ_1
+#define AC_PHASE_PIO_INTE (pio0_hw->inte1)
+#define AC_PHASE_PIO_INTS (pio0_hw->ints1)
+#define AC_PHASE_PIO_INTR_BIT PIO_INTR_SM1_RXNEMPTY_LSB
 
-#define PIO0_DREQ_NMTC_RX DREQ_PIO0_RX0
-#define PIO0_DREQ_NMTC_TX DREQ_PIO0_TX0
-
-#define PIO0_IRQ_NMTC PIO0_IRQ_0
-#define PIO0_INTE_NMTC (pio0_hw->inte0)
-#define PIO0_INTS_NMTC (pio0_hw->ints0)
-
-#define PIO0_PIOIRQ_NMTC 0
+#define NMTC_PIO_CODE_A 0
+#define NMTC_PIO_CODE_E (NMTC_PIO_CODE_A + MMAXX(nmtc_pio_start_program.length, nmtc_pio_run_program.length))
+#define AC_PHASE_PIO_CODE_A NMTC_PIO_CODE_E
+#define AC_PHASE_PIO_CODE_E (AC_PHASE_PIO_CODE_A + ac_phase_pio_program.length)
 
 inline static uint32_t g_pio0_ctrl_sme_set(uint32_t sme) {
 	return g_pio0_ctrl |= sme << PIO_CTRL_SM_ENABLE_LSB;
@@ -105,19 +143,19 @@ inline static uint32_t g_pio0_ctrl_sme_clr(uint32_t sme) {
 //-----------------------------------------------------------------------------------------------------------------------
 // i2c allocation
 
-#define I2C_TMP101 i2c0_hw
-
-#define I2C_IRQ_TMP101 I2C0_IRQ
-
-#define I2C_DREQ_TMP101_TX DREQ_I2C0_TX
-#define I2C_DREQ_TMP101_RX DREQ_I2C0_RX
+#define TMP101_I2C i2c0_hw
+#define TMP101_I2C_IRQ I2C0_IRQ
+#define TMP101_I2C_DREQ_TX DREQ_I2C0_TX
+#define TMP101_I2C_DREQ_RX DREQ_I2C0_RX
 
 //-----------------------------------------------------------------------------------------------------------------------
 // alarms
 
-#define ALARM_ID_TMP101 0
+#define TMP101_ALARM_ID 0
+#define TMP101_ALARM_IRQ TIMER_IRQ_0
 
-#define ALARM_IRQ_ID_TMP101 TIMER_IRQ_0
+#define AC_ALARM_ID 1
+#define AC_ALARM_IRQ TIMER_IRQ_1
 
 //-----------------------------------------------------------------------------------------------------------------------
 // power supply ? todo is this implemented

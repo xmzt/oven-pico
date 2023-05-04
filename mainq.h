@@ -16,28 +16,32 @@
 
 typedef void mainq_fun_t(void);
 
-#define MAINQ_RING_Z (1<<7)
-#define MAINQ_RING_MASK (MAINQ_RING_Z-1)
+#define MAINQ_RING_Z (1 << 7)
+#define MAINQ_RING_MASK (MAINQ_RING_Z - 1)
 
-extern mainq_fun_t * g_mainq_ring[MAINQ_RING_Z] __attribute__ (( aligned(0x80) ));
+extern mainq_fun_t * g_mainq_ring[MAINQ_RING_Z] __attribute__ (( aligned(MAINQ_RING_Z) ));
 
 typedef struct {
 	mainq_fun_t **pro;
 	mainq_fun_t **con;
-	uint proDropN;
+	uint z_max;
+	uint dropN;
 } mainq_t;
 extern mainq_t g_mainq;
 
 inline static void mainq_init(mainq_t *self, mainq_fun_t **ring) {
 	self->pro = self->con = ring;
-	self->proDropN = 0;
+	self->z_max = 0;
+	self->dropN = 0;
 }
 
 inline static int mainq_pro1(mainq_t *self, mainq_fun_t *item) {
-	if(MAINQ_RING_Z > (self->pro - self->con))
+	uint z = self->pro - self->con;
+	if(self->z_max < z) self->z_max = z;
+	if(MAINQ_RING_Z > z)
 		*(mainq_fun_t**)((uint32_t)g_mainq_ring | ((uint32_t)self->pro++ & MAINQ_RING_MASK)) = item;
 	else
-		self->proDropN++;
+		self->dropN++;
 }
 
 inline static mainq_fun_t * mainq_con1(mainq_t *self) {

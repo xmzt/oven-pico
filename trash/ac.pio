@@ -1,0 +1,90 @@
+;;;----------------------------------------------------------------------------------------------------------------------
+;;; ac_pio_phase1
+;;;
+;;; record timestamps of when jmp PIN goes lo to hi, and again hi to lo.
+;;; 
+;;; y is the timing clock, it always decrements 1 every 3 instructions regardless of code path
+;;; y synchronized with triac output driver state machine
+;;; 
+;;; AUTOPUSH len=32 used so a single 'in y,32' takes care of pushing timestamp and interrupt
+;;; caller uses SMx_RXNEMPTY as interrupt
+
+	.program ac_pio_phase1
+
+	jmp pin loHi
+	jmp loHiWait
+loHi:	
+	in isr, 1
+	
+	
+loDec0:	
+	jmp y-- loDec1		; dec clock
+loDec1:	
+	jmp pin loHi		; jmp if pin goes hi
+	jmp loDec0		; pin still lo, nop
+loHi:	
+	in y, 32		; pin lo to hi: autopush timestamp to RX_FIFO, which causes interrupt
+hiDec0:
+	jmp y-- hiDec1		; dec clock
+hiDec1:
+	jmp pin hiDec0Delay	; jmp if pin still hi (to another jmp to keep cycle time constant) 
+	in y,32			; pin hi to lo: autopush timestamp to RX_FIFO, which causes interrupt
+.wrap
+hiDec0Delay:
+	jmp hiDec0		; pin still hi 
+
+;;;----------------------------------------------------------------------------------------------------------------------
+;;; ac_pio_phase2
+;;;
+;;; record timestamps of when jmp PIN goes lo to hi, and again hi to lo.
+;;; 
+;;; y is the timing clock, it always decrements 1 every 3 instructions regardless of code path
+;;; y synchronized with triac output driver state machine
+;;; 
+;;; AUTOPUSH len=32 used so a single 'in y,32' takes care of pushing timestamp and interrupt
+;;; caller uses SMx_RXNEMPTY as interrupt
+
+.program ac_pio_phase2
+
+.wrap_target
+loDec0:	
+	jmp y-- loDec1		; dec clock
+loDec1:	
+	jmp pin loHi		; jmp if pin goes hi
+	jmp loDec0		; pin still lo, nop
+loHi:	
+	in y, 32		; pin lo to hi: autopush timestamp to RX_FIFO, which causes interrupt
+hiDec0:
+	jmp y-- hiDec1		; dec clock
+hiDec1:
+	jmp pin hiDec0Delay	; jmp if pin still hi (to another jmp to keep cycle time constant) 
+	in y,32			; pin hi to lo: autopush timestamp to RX_FIFO, which causes interrupt
+.wrap
+hiDec0Delay:
+	jmp hiDec0		; pin still hi 
+
+;;; ---------------------------------------------------------------------------------------------------------------------
+;;; ac triac control
+
+.program ac_pio_triac
+
+loDec0:	
+	jmp y-- loDec1		; dec clock
+loDec1:	
+	
+run_busy_loop:
+	;; jump all the way here, even if redoing instructions, to save an instruction
+	set pins, 0		[TEnOff - 3]    ; EN=0 
+.wrap_target
+	mov osr, x				; load OSR with busy read command from X
+	out pindirs, 10				; OSR[0:9] are pindirs
+	out pins, 10		[TSetup - 1]	; OSR[10:19] are pin values
+	set pins, 1		[TEnOn - 2] 	; EN=1
+	jmp pin run_busy_loop			; loop if DB7 (busy flag) is set
+	set pins, 0		[TEnOff - 3]	; EN=0
+	pull block				; load OSR from TX_FIFO
+	out pindirs, 10				; output pindirs OSR[0:9]
+	out pins, 10        	[TSetup - 1]	; output pins OSR[10:19]
+	set pins, 1		[TEnOn - 1]	; EN=1
+	set pins, 0		[TEnOff - 3]	; EN=0
+.wrap	

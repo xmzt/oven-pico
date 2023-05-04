@@ -1,5 +1,6 @@
 // raspberry pi pico, NMTC-S16205DRGHS display with SPLC780 controller
 #include "base.h"
+#include "ac.h"
 #include "mainq.h"
 #include "nmtc.h"
 #include "tmp101.h"
@@ -13,7 +14,7 @@
 #include "hardware/structs/padsbank0.h"
 #include "hardware/structs/iobank0.h"
 #include "hardware/sync.h"
-#include <stdio.h>
+#include "stdio.h"
 
 //-----------------------------------------------------------------------------------------------------------------------
 // globals
@@ -23,7 +24,35 @@ uint32_t g_test[8];
 uint32_t g_pio0_ctrl;
 mainq_fun_t * g_mainq_ring[MAINQ_RING_Z] __attribute__ (( aligned(0x80) ));
 mainq_t g_mainq;
-					  
+
+//-----------------------------------------------------------------------------------------------------------------------
+// isr shared
+
+static void dma0_isr(void) {
+	uint32_t intr = dma_hw->intr;
+	if((1 << AC_DMA_B) & intr) (*g_ac_dma_b_isr)();
+	if((1 << NMTC_DMA_B) & intr) (*g_nmtc_dma_b_isr)();
+	if((1 << TMP101_DMA_B) & intr) tmp101_dma_b_isr();
+}
+
+inline static void dma0_isr_init(void) {
+	util_irq_isr(DMA_IRQ_0, dma0_isr);
+	nvic_hw->iser = 1 << DMA_IRQ_0;
+	dma_hw->inte0 = 1 << AC_DMA_B | 1 << NMTC_DMA_B | 1 << TMP101_DMA_B;
+}
+
+//-----------------------------------------------------------------------------------------------------------------------
+// led_init
+
+void led_init(void) {
+    sio_hw->gpio_oe_set = 1 << PICO_DEFAULT_LED_PIN;
+    sio_hw->gpio_set = 1 << PICO_DEFAULT_LED_PIN;
+	padsbank0_hw->io[PICO_DEFAULT_LED_PIN] = UTIL_PADS_BANK0_GPIO_OD_IE_DRIVE_PUE_PDE_SCHMITT_SLEWFAST
+		(0, 1, PADS_BANK0_GPIO0_DRIVE_VALUE_4MA, 0, 0, 1, 0);
+	iobank0_hw->io[PICO_DEFAULT_LED_PIN].ctrl = UTIL_IO_BANK0_GPIO_CTRL_FUNCSEL_OUTOVER_OEOVER_INOVER_IRQOVER
+		(IO_BANK0_GPIO0_CTRL_FUNCSEL_VALUE_SIO_0, 0, 0, 0, 0);
+}
+	
 //-----------------------------------------------------------------------------------------------------------------------
 // main
 
@@ -32,63 +61,34 @@ int main() {
 	sleep_ms(3000); // wait for stdio 
 
 	g_rando = util_rando(32);
-	float sysHz = clock_get_hz(clk_sys);
-	printf("\n\n[%p] sysHz=%f\n", g_rando, sysHz);
-
+	clock_hw_t *ref = &clocks_hw->clk[clk_ref];
+	clock_hw_t *sys = &clocks_hw->clk[clk_sys];
+	printf("\n\n[%p]\n"
+		   "    systick  SYST_CSR=%p SYST=RVR=%u SYST_CVR=%u SYST_CALIB=%p\n"
+		   "    watchdog CTRL=%p LOAD=%p TICK=%p\n"
+		   "    clk_ref CTRL=%p DIV=%p SELECTED=%p\n"
+		   "    clk_sys CTRL=%p DIV=%p SELECTED=%p\n"
+		   "    pll_sys CS=%p PWR=%p FBDIV_INT=%p PRIM=%p\n",
+		   g_rando, 
+		   systick_hw->csr, systick_hw->rvr, systick_hw->cvr, systick_hw->calib,
+		   watchdog_hw->ctrl, watchdog_hw->load, watchdog_hw->tick,
+		   ref->ctrl, ref->div, ref->selected,
+		   sys->ctrl, sys->div, sys->selected,
+		   pll_sys_hw->cs, pll_sys_hw->pwr, pll_sys_hw->fbdiv_int, pll_sys_hw->prim);
+	
 	mainq_init(&g_mainq, g_mainq_ring);
+	g_pio0_ctrl = 0;
 
 	//-------------------------------------------------------------------------------------------------------------------
-	// init peripherals before pads are enabled. these should not cause interrupt to be executed
+	// init components
 
-	g_pio0_ctrl = 0;
+	dma0_isr_init();
+
+	led_init();
 	tmp101_init();
 	nmtc_init();
-
-	//-------------------------------------------------------------------------------------------------------------------
-	// pins
+	ac_init();
 	
-    sio_hw->gpio_oe_set = 1<<PICO_DEFAULT_LED_PIN
-		| 1<<PIN_TMP101_VCC;
-    sio_hw->gpio_set = 1<<PICO_DEFAULT_LED_PIN;
-	sio_hw->gpio_clr = 1<<PIN_TMP101_VCC;
-
-	padsbank0_hw->io[PICO_DEFAULT_LED_PIN] = UTIL_PADS_BANK0_GPIO_OD_IE_DRV_PUE_PDE_SCH_SF
-		(0, 1, PADS_BANK0_GPIO0_DRIVE_VALUE_4MA, 0, 0, 1, 0);
-	iobank0_hw->io[PICO_DEFAULT_LED_PIN].ctrl = UTIL_IO_BANK0_GPIO_CTRL_FS
-		(IO_BANK0_GPIO0_CTRL_FUNCSEL_VALUE_SIO_0);
-
-	// tmp101
-
-	padsbank0_hw->io[PIN_TMP101_VCC] = UTIL_PADS_BANK0_GPIO_OD_IE_DRV_PUE_PDE_SCH_SF
-		(0, 1, PADS_BANK0_GPIO0_DRIVE_VALUE_12MA, 0, 0, 1, 0);
-	iobank0_hw->io[PIN_TMP101_VCC].ctrl = UTIL_IO_BANK0_GPIO_CTRL_FS
-		(IO_BANK0_GPIO0_CTRL_FUNCSEL_VALUE_SIO_0);
-
-	padsbank0_hw->io[PIN_TMP101_SDA] = UTIL_PADS_BANK0_GPIO_OD_IE_DRV_PUE_PDE_SCH_SF
-		(0, 1, PADS_BANK0_GPIO0_DRIVE_VALUE_4MA, 1, 0, 1, 0);
-	iobank0_hw->io[PIN_TMP101_SDA].ctrl = UTIL_IO_BANK0_GPIO_CTRL_FS
-		(IO_BANK0_GPIO0_CTRL_FUNCSEL_VALUE_I2C0_SDA);
-
-	padsbank0_hw->io[PIN_TMP101_SCL] = UTIL_PADS_BANK0_GPIO_OD_IE_DRV_PUE_PDE_SCH_SF
-		(0, 1, PADS_BANK0_GPIO0_DRIVE_VALUE_4MA, 1, 0, 1, 0);
-	iobank0_hw->io[PIN_TMP101_SCL].ctrl = UTIL_IO_BANK0_GPIO_CTRL_FS
-		(IO_BANK0_GPIO0_CTRL_FUNCSEL_VALUE_I2C0_SDA);
-	
-	// nmtc
-
-	for(uint i = PIN_NMTC_DB8_RS_RW_EN, j = i + 11; i < j; i++) {
-		padsbank0_hw->io[i] = UTIL_PADS_BANK0_GPIO_OD_IE_DRV_PUE_PDE_SCH_SF
-			(0, 1, PADS_BANK0_GPIO0_DRIVE_VALUE_12MA, 0, 0, 1, 0);
-		iobank0_hw->io[i].ctrl = UTIL_IO_BANK0_GPIO_CTRL_FS
-			(IO_BANK0_GPIO0_CTRL_FUNCSEL_VALUE_PIO0_0);
-	}
-
-	//-------------------------------------------------------------------------------------------------------------------
-	// start the action
-
-	tmp101_start();
-	nmtc_start();
-
 	//-------------------------------------------------------------------------------------------------------------------
 	// main loop
 
@@ -104,9 +104,13 @@ int main() {
 		wfiN++;
 		if((fun = mainq_con1(&g_mainq)))
 			fun();
+		// stats
 		ts1 = timer_hw->timerawl;
 		if(OVEN_WFIN_DUR <= (ts1 - ts0)) {
-			printf("[wfiN] rate=%.4f\n", (float)TIMER_HZ * wfiN / (ts1 - ts0));
+			printf("[main] wfi/sec=%.4f q.z_max=%u q.dropN=%u\n",
+				   (float)TIMER_HZ * wfiN / (ts1 - ts0),
+				   g_mainq.z_max,
+				   g_mainq.dropN);
 			wfiN = 0;
 			ts0 = ts1;
 		}

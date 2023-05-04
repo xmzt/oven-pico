@@ -1,0 +1,37 @@
+;;; ---------------------------------------------------------------------------------------------------------------------
+;;; ac phase detech and ac triac control
+
+;;;----------------------------------------------------------------------------------------------------------------------
+;;; ac_phase_pio
+;;;
+;;; no-autopull, autopush/32, jmp_pin=PHASE_IN, PHASE_OUT=in_base+1, execution starts at wrap_target
+;;;
+;;; OSR contains pre_sample_dur (used as a scratch register)
+;;; X contains sample_dur
+;;; 
+;;; 1. caller preloads txf with pre_sample_dur and sample_dur, causes phase_out to go hi (e.g. pwm)
+;;; 2. pio will notice when phase_out goes hi.
+;;; 3. blanking period before sample of pre_sample_dur
+;;; 4. sample phase_in for sample_dur or timeout.
+;;; 5. returns (in rxf) remaining sample_dur on success, -1 on timeout
+;;;
+;;; cycles elapsed after phase_out goes hi based on return value in rxf:
+;;; 4 + pre_sample_dur + 2*(sample_dur - rxf)
+;;;
+;;; as rxf = -1 on failure, this holds for success or timeout. add 1 to include final 'out y,32' inst.
+
+	.program ac_phase_pio
+
+	.wrap_target
+	wait 1 pin 1		; wait for phase out hi
+	mov y, x		; load pre_sample_dur
+pre_sample:			; perform pre_sample_dur
+	jmp y-- pre_sample 	; note this loop runs 2x speed of sample loop
+	mov y, osr		; load sample_dur
+sample:	
+	jmp pin sample_hi	; if pin lo to hi (use GPIO_CTRL.INOVER to test for hi to lo)
+	jmp y-- sample		; sample loop
+sample_hi:
+	in y, 32		; return sample_duration remaining (-1 if pin still lo)
+	wait 0 pin 1		; wait for phase out lo
+	.wrap

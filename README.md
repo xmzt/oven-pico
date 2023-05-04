@@ -85,3 +85,16 @@ D. PIO. Decrement counter until pin change, mov counter into fifo, interrupt, re
 
 For the purposes of AC detect for TRIAC triggering, any of these should be plenty accurate, but
 in theory, D, with no uncertainty, should be possible.
+
+## Notes
+
+xosc - 12 MHz
+clk_ref: 12 MHz, xosc/1
+watchdog: 1 MHz, clk_ref/12
+systick: disabled
+pll_sys: refdiv=1 fbdiv=7d postdiv1=6 postdiv2=2, vco = 1500 MHz = (12MHZ / 1) * 125, 125 MHz = vco / (6 * 2)
+
+ac detect
+tick (timer + pwm oc) for phase out
+
+
